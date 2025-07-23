@@ -2,177 +2,182 @@ import pickle
 import streamlit as st
 import numpy as np
 import pandas as pd
-import time
 
-# --- KONFIGURASI HALAMAN & GAYA (CSS) ---
+# --- KONFIGURASI HALAMAN ---
 st.set_page_config(
-    page_title="Kalkulator Kalori",
+    page_title="XG TRACKER",
     page_icon="",
-    layout="centered"  # Menggunakan layout terpusat
+    layout="centered"
 )
 
-# CSS Kustom untuk tema yang simpel dan modern
+# --- LOGIKA & DATA ---
+@st.cache_resource
+def load_dependencies():
+    """Memuat model dan scaler."""
+    try:
+        with open('scaler_kalori.sav', 'rb') as f_scaler:
+            scaler = pickle.load(f_scaler)
+        with open('model_kalori.pkl', 'rb') as f_model:
+            model = pickle.load(f_model)
+        return model, scaler
+    except FileNotFoundError:
+        st.error("Gagal memuat file model/scaler. Pastikan file ada.")
+        return None, None
+
+model, scaler = load_dependencies()
+
+def calculate_food_calories(fat, carb, protein, sugars):
+    """Memprediksi kalori dari makanan."""
+    if not model or not scaler:
+        return 0
+    user_input = pd.DataFrame({
+        'calories': [0], 'fat': [fat], 'carb': [carb], 'sugars': [sugars], 'protein': [protein]
+    })
+    input_scaled = scaler.transform(user_input)
+    features = [input_scaled[0, 1], input_scaled[0, 2], input_scaled[0, 4], input_scaled[0, 3]]
+    prediction = model.predict([features])
+    dummy_inverse = np.zeros((1, 5))
+    dummy_inverse[0, 0] = prediction[0]
+    return scaler.inverse_transform(dummy_inverse)[0, 0]
+
+# --- UI & CSS ---
 st.markdown("""
 <style>
-/* Mengubah font utama */
-html, body, [class*="st-"] {
-    font-family: 'Helvetica', 'Arial', sans-serif;
-}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+html, body, [class*="st-"] { font-family: 'Inter', sans-serif; }
 
-/* Warna latar belakang utama */
 .stApp {
-    background-color: #212121;
+    background-color: #1A1C20;
+    color: #EAEAEA;
+}
+h1, h2, h3, h4, h5, h6 {
+    color: #FFFFFF;
 }
 
-/* Gaya untuk judul utama */
-h1 {
-    color: #000000;
-    font-weight: bold;
-}
-
-/* Gaya untuk kartu (card) */
-.card {
-    background-color: white;
-    border-radius: 15px;
+.input-container {
+    background-color: #272A30;
     padding: 25px;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-    margin-bottom: 20px;
+    border-radius: 12px;
+    border: 1px solid #3A3D46;
 }
 
-/* Gaya untuk tombol */
-.stButton>button {
-    background-color: #FF4B4B;
-    color: white;
-    font-weight: bold;
-    border: none;
-    border-radius: 8px;
-    padding: 12px 24px;
-    width: 100%;
+.progress-ring {
+    position: relative;
+    width: 220px;
+    height: 220px;
+    margin: 20px auto;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: conic-gradient(#8A42D1 var(--progress-angle), #3A3D46 var(--progress-angle));
+    transition: background 0.5s ease;
 }
-.stButton>button:hover {
-    background-color: #E03C3C;
+.progress-ring::before {
+    content: '';
+    position: absolute;
+    width: 85%;
+    height: 85%;
+    background-color: #272A30;
+    border-radius: 50%;
 }
-
-/* Gaya untuk hasil metrik */
-.result-metric {
-    background-color: #28a745;
-    color: white;
-    padding: 20px;
-    border-radius: 10px;
+.progress-text {
+    position: relative;
     text-align: center;
 }
-.result-metric h3 {
-    color: white;
-    margin-bottom: 5px;
+.progress-text h2 {
+    font-size: 2.8rem;
+    font-weight: 700;
+    margin: 0;
+    color: #8A42D1;
 }
-.result-metric h1 {
+.progress-text p {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+    color: #A0AEC0;
+}
+
+.stButton>button {
+    background-color: #8A42D1;
     color: white;
-    font-size: 3.5rem;
-    margin-top: 0;
+    font-weight: 600;
+    border-radius: 10px;
+    padding: 12px 24px;
+    width: 100%;
 }
 </style>
 """, unsafe_allow_html=True)
 
-# --- LOGIKA APLIKASI ---
 
-# Inisialisasi variabel
-model = None
-scaler = None
+## --- BAGIAN UTAMA APLIKASI ---
 
-# Nama file model dan scaler
-NAMA_FILE_MODEL = 'model_kalori.pkl'
-NAMA_FILE_SCALER = 'scaler_kalori.sav'
+st.title("🎯 XG TRACKER")
 
-# Muat scaler dan model menggunakan cache agar lebih cepat
-@st.cache_resource
-def load_model_scaler():
-    try:
-        with open(NAMA_FILE_SCALER, 'rb') as file_scaler:
-            scaler = pickle.load(file_scaler)
-        with open(NAMA_FILE_MODEL, 'rb') as file_model:
-            model = pickle.load(file_model)
-        return model, scaler
-    except FileNotFoundError:
-        st.error(f"GAGAL MEMUAT FILE: Pastikan file '{NAMA_FILE_MODEL}' dan '{NAMA_FILE_SCALER}' ada.")
-        return None, None
-    except Exception as e:
-        st.error(f"Terjadi error: {e}")
-        return None, None
+# Inisialisasi state
+if 'total_calories_consumed' not in st.session_state:
+    st.session_state.total_calories_consumed = 0
 
-model, scaler = load_model_scaler()
+# Dummy value untuk tampilan awal
+daily_goal = 2000 
 
+# Bagian Laporan (ditampilkan lebih dulu)
+with st.container():
+    st.subheader("Sisa Kalori Harian Anda")
+    report_placeholder = st.empty()
 
-# --- TAMPILAN APLIKASI (UI) ---
+## Semua input dibungkus dalam satu kontainer "kartu"
+with st.container():
 
-st.title("🎯 Kalkulator Estimasi Kalori")
-st.write("Analisis kandungan nutrisi makro makanan Anda untuk mendapatkan estimasi total kalorinya.")
-st.markdown("---")
+    # 1. Atur Target
+    st.subheader("1. Atur Target Kalori Harian")
+    daily_goal = st.number_input("Target Kalori (kkal)", min_value=0, max_value=5000, value=2000, step=50, label_visibility="collapsed")
 
+    st.markdown("---")
 
-# Gunakan st.form untuk input dalam sebuah "kartu"
-st.markdown('<div class="card" color="yellow">', unsafe_allow_html=True)
-with st.form(key="calorie_form"):
-    st.subheader("👇 Masukkan Detail Nutrisi")
+    # 2. Input Data Makanan
+    st.subheader("2. Hitung Kalori")
     
     col1, col2 = st.columns(2)
     with col1:
-        fat = st.number_input("Lemak (g)", min_value=0.0, max_value=200.0, value=0.0, step=0.1)
-        protein = st.number_input("Protein (g)", min_value=0.0, max_value=200.0, value=0.0, step=0.1)
+        f_fat = st.number_input("Lemak (g)", min_value=0.0, max_value=200.0, value=0.0, step=0.1)
+        f_protein = st.number_input("Protein (g)", min_value=0.0, max_value=200.0, value=0.0, step=0.1)
     with col2:
-        carb = st.number_input("Karbohidrat (g)", min_value=0.0, max_value=500.0, value=0.0, step=0.1)
-        sugars = st.number_input("Gula (g)", min_value=0.0, max_value=200.0, value=0.0, step=0.1)
+        f_carb = st.number_input("Karbohidrat (g)", min_value=0.0, max_value=500.0, value=0.0, step=0.1)
+        f_sugars = st.number_input("Gula (g)", min_value=0.0, max_value=200.0, value=0.0, step=0.1)
     
-    st.write("")
-    submit_button = st.form_submit_button(label='✨ Hitung Sekarang!')
-st.markdown('</div>', unsafe_allow_html=True)
+    if st.button("Tambah Asupan Makanan", key="add_food"):
+        food_cal = calculate_food_calories(f_fat, f_carb, f_protein, f_sugars)
+        st.session_state.total_calories_consumed += food_cal
+        st.success(f"Total Kalori **{food_cal:.0f} kkal**.")
 
+    st.markdown("---")
 
-# --- PROSES DAN TAMPILAN HASIL ---
-if submit_button:
-    if model is not None and scaler is not None:
-        with st.spinner('Model sedang menganalisis...'):
-            time.sleep(1) # Memberi jeda agar spinner terlihat
-            # 1. Siapkan data input mentah
-            user_input_raw = pd.DataFrame({
-                'calories': [0], 'fat': [fat], 'carb': [carb], 'sugars': [sugars], 'protein': [protein]
-            })
-            user_input_raw = user_input_raw[['calories', 'fat', 'carb', 'sugars', 'protein']]
-
-            # 2. Lakukan penskalaan (transform)
-            input_scaled = scaler.transform(user_input_raw)
-
-            # 3. Ambil fitur untuk prediksi
-            features_for_prediction = [input_scaled[0, 1], input_scaled[0, 2], input_scaled[0, 4], input_scaled[0, 3]]
-            
-            # 4. Lakukan prediksi
-            prediction_scaled = model.predict([features_for_prediction])
-            
-            # 5. Lakukan penskalaan balik (inverse transform)
-            dummy_for_inverse = np.zeros((1, 5))
-            dummy_for_inverse[0, 0] = prediction_scaled[0]
-            prediction_unscaled = scaler.inverse_transform(dummy_for_inverse)
-            kalori_sebenarnya = prediction_unscaled[0, 0]
-
-        # Tampilkan hasil dalam "kartu" terpisah
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.subheader("📊 Hasil Estimasi Anda")
+    # Tombol Reset
+    if st.button("Reset Laporan Harian"):
+        st.session_state.total_calories_consumed = 0
+        st.rerun()
         
-        # Tampilkan hasil akhir dengan gaya khusus
-        st.markdown(f"""
-        <div class="result-metric">
-            <h3>Total Estimasi Kalori</h3>
-            <h1>{kalori_sebenarnya:.2f} kkal</h1>
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# Mengisi placeholder laporan dengan data terbaru
+with report_placeholder.container():
+    calories_left = daily_goal - st.session_state.total_calories_consumed
+    progress_percent = (st.session_state.total_calories_consumed / daily_goal) * 100
+    progress_angle = max(0, min(360, progress_percent * 3.6))
+
+    st.markdown(f"""
+    <div class="progress-ring" style="--progress-angle: {progress_angle}deg;">
+        <div class="progress-text">
+            <h2>{calories_left:.0f}</h2>
+            <p>kkal Tersisa</p>
         </div>
-        """, unsafe_allow_html=True)
-        
-        # Gunakan expander untuk detail input
-        with st.expander("Lihat detail nutrisi yang Anda masukkan"):
-            st.write(f"- **Lemak:** `{fat}` g")
-            st.write(f"- **Karbohidrat:** `{carb}` g")
-            st.write(f"- **Protein:** `{protein}` g")
-            st.write(f"- **Gula:** `{sugars}` g")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-        
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.session_state.total_calories_consumed == 0:
+        st.info("Ayo mulai lacak asupan kalori Anda hari ini!")
+    elif calories_left > 0:
+        st.success(f"Kerja bagus! Anda masih punya **{calories_left:.0f} kkal** untuk mencapai target.")
     else:
-        st.warning("Gagal melakukan prediksi. Pastikan file model dan scaler sudah dimuat dengan benar.")
+        st.warning(f"Target tercapai! Anda surplus **{-calories_left:.0f} kkal**.")
